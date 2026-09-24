@@ -1,0 +1,15 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "sensorHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,261 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-heading: 'Space Grotesk', 'Sora', sans-serif;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #0b101d;
+    color: #f1f5f9;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: var(--font-heading);
+  }
+}
+
+/* Tabular numbers to prevent digit reflow/jitter on updates */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* CLAYMORPHISM DESIGN SYSTEM */
+.clay-card {
+  background: #162032;
+  border-radius: 1.5rem;
+  box-shadow: 
+    8px 10px 20px 0px rgba(0, 0, 0, 0.45),
+    -6px -6px 16px 0px rgba(255, 255, 255, 0.04),
+    inset -4px -4px 8px 0px rgba(0, 0, 0, 0.4),
+    inset 4px 4px 8px 0px rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.clay-card-interactive {
+  cursor: pointer;
+}
+
+.clay-card-interactive:hover {
+  transform: translateY(-4px);
+  box-shadow: 
+    12px 14px 28px 0px rgba(0, 0, 0, 0.55),
+    -8px -8px 20px 0px rgba(255, 255, 255, 0.06),
+    inset -4px -4px 10px 0px rgba(0, 0, 0, 0.4),
+    inset 4px 4px 10px 0px rgba(255, 255, 255, 0.12);
+}
+
+.clay-card-interactive:active {
+  transform: translateY(2px);
+  box-shadow: 
+    4px 4px 10px 0px rgba(0, 0, 0, 0.4),
+    inset -2px -2px 6px 0px rgba(0, 0, 0, 0.5),
+    inset 2px 2px 6px 0px rgba(255, 255, 255, 0.05);
+}
+
+.clay-inset-dark {
+  background: #090e18;
+  border-radius: 1.25rem;
+  box-shadow: 
+    inset 4px 4px 10px rgba(0, 0, 0, 0.55),
+    inset -2px -2px 6px rgba(255, 255, 255, 0.03);
+}
+
+.clay-badge {
+  box-shadow: 
+    2px 2px 6px rgba(0, 0, 0, 0.3),
+    inset -1px -1px 3px rgba(0, 0, 0, 0.3),
+    inset 1px 1px 3px rgba(255, 255, 255, 0.2);
+}
+
+/* Clay Colored Pill Buttons */
+.clay-btn-cyan {
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+  color: #032830;
+  box-shadow: 
+    4px 6px 14px rgba(6, 182, 212, 0.4),
+    inset -2px -2px 6px rgba(0, 0, 0, 0.3),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.45);
+}
+
+.clay-btn-emerald {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #012b1d;
+  box-shadow: 
+    4px 6px 14px rgba(16, 185, 129, 0.4),
+    inset -2px -2px 6px rgba(0, 0, 0, 0.3),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.45);
+}
+
+.clay-btn-rose {
+  background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  color: #2b0008;
+  box-shadow: 
+    4px 6px 14px rgba(244, 63, 94, 0.4),
+    inset -2px -2px 6px rgba(0, 0, 0, 0.3),
+    inset 2px 2px 6px rgba(255, 255, 255, 0.45);
+}
+
+/* Ambient Breathing Animations */
+@keyframes breath-slow {
+  0%, 100% { transform: scale(1) translate(0, 0); opacity: 0.3; }
+  50% { transform: scale(1.08) translate(-10px, 15px); opacity: 0.55; }
+}
+
+.animate-breath {
+  animation: breath-slow 12s ease-in-out infinite;
+}
+
+/* Live Value Flash Highlight */
+@keyframes value-pulse {
+  0% { background-color: rgba(6, 182, 212, 0.35); box-shadow: 0 0 20px rgba(6, 182, 212, 0.5); }
+  100% { background-color: transparent; }
+}
+
+.animate-value-flash {
+  animation: value-pulse 0.45s ease-out;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b101d;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Noise Overlay */
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
+/* ========================================================= */
+/* LIGHT MODE — SOFT UI NEUMORPHISM DESIGN SYSTEM           */
+/* ========================================================= */
+[data-theme="light"] {
+  background-color: #e6eaf0 !important;
+  color: #1e293b !important;
+}
+
+[data-theme="light"] body {
+  background-color: #e6eaf0 !important;
+  color: #1e293b !important;
+}
+
+/* Neomorphic Raised Cards */
+[data-theme="light"] .clay-card {
+  background: #e6eaf0;
+  border-radius: 1.5rem;
+  box-shadow: 
+    8px 8px 16px #c2ccd8,
+    -8px -8px 16px #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  color: #1e293b;
+}
+
+[data-theme="light"] .clay-card-interactive:hover {
+  transform: translateY(-3px);
+  box-shadow: 
+    12px 12px 24px #b6c2cf,
+    -12px -12px 24px #ffffff;
+}
+
+[data-theme="light"] .clay-card-interactive:active {
+  transform: translateY(1px);
+  box-shadow: 
+    inset 4px 4px 8px #c2ccd8,
+    inset -4px -4px 8px #ffffff;
+}
+
+/* Neomorphic Recessed/Inset Panels */
+[data-theme="light"] .clay-inset-dark {
+  background: #e6eaf0;
+  border-radius: 1.25rem;
+  box-shadow: 
+    inset 4px 4px 8px #c2ccd8,
+    inset -4px -4px 8px #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #1e293b;
+}
+
+/* Neomorphic Soft Badges */
+[data-theme="light"] .clay-badge {
+  background: #e6eaf0;
+  box-shadow: 
+    3px 3px 6px #c2ccd8,
+    -3px -3px 6px #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* Light Theme Text Overrides for High Contrast Neomorphism */
+[data-theme="light"] .text-white {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .text-slate-100 {
+  color: #1e293b !important;
+}
+
+[data-theme="light"] .text-slate-200 {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .text-slate-300 {
+  color: #475569 !important;
+}
+
+[data-theme="light"] .text-slate-400 {
+  color: #64748b !important;
+}
+
+[data-theme="light"] .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Neomorphic Soft Containers & Modals */
+[data-theme="light"] .glass-panel,
+[data-theme="light"] .bg-slate-900\/60,
+[data-theme="light"] .bg-slate-900\/80,
+[data-theme="light"] .bg-slate-900\/90,
+[data-theme="light"] .bg-slate-900 {
+  background-color: #e6eaf0 !important;
+  box-shadow: inset 4px 4px 8px #c2ccd8, inset -4px -4px 8px #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+}
+
+[data-theme="light"] .bg-slate-950,
+[data-theme="light"] .bg-\[\#0b0f19\],
+[data-theme="light"] .bg-\[\#0b101d\],
+[data-theme="light"] .bg-\[\#121929\] {
+  background-color: #e6eaf0 !important;
+}
+
+[data-theme="light"] .border-slate-800,
+[data-theme="light"] .border-slate-800\/80,
+[data-theme="light"] .border-slate-800\/60 {
+  border-color: #c2ccd8 !important;
+}
+
+/* Custom Neomorphic Scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-track {
+  background: #e6eaf0;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  box-shadow: 2px 2px 4px #b8c4d4;
+}
