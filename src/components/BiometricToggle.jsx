@@ -47,7 +47,7 @@ export default function BiometricToggle({
       if (onNotify) {
         onNotify(
           res.method === 'biometric'
-            ? 'PhonePe-style Biometric & PIN Security Lock Enabled!'
+            ? 'Biometric & PIN Security Lock Enabled!'
             : 'App PIN Security Lock Enabled!',
           'success'
         );
@@ -68,7 +68,7 @@ export default function BiometricToggle({
               ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.25)] hover:bg-cyan-500/25'
               : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:text-white hover:bg-slate-800'
           }`}
-          title={isEnabled ? 'PhonePe-style App Lock is active. Click to disable.' : 'Click to enable App Lock security.'}
+          title={isEnabled ? 'App Lock is active. Click to disable.' : 'Click to enable App Lock security.'}
         >
           {isEnabled ? (
             <>
@@ -120,7 +120,7 @@ export default function BiometricToggle({
                 </div>
                 <div>
                   <h3 className="font-bold text-base text-white font-heading">Enable App Lock</h3>
-                  <p className="text-xs text-slate-400">PhonePe style Biometrics & PIN</p>
+                  <p className="text-xs text-slate-400">Biometric & PIN Security</p>
                 </div>
               </div>
 

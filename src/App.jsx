@@ -29,7 +29,7 @@ export default function App() {
   // Theme Management (Dark Mode vs Light Neomorphism)
   const { theme, toggleTheme } = useTheme();
 
-  // PhonePe-style Device Biometric Security Lock
+  // Device Biometric Security Lock
   const biometricLock = useBiometricLock();
 
   // Custom hooks for real-time data, session stats, and motion settings
@@ -58,7 +58,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col relative overflow-x-hidden selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* PhonePe-style Device Security Lock Overlay */}
+      {/* Device Security Lock Overlay */}
       <AppLockOverlay
         isLocked={biometricLock.isLocked}
         isSupported={biometricLock.isSupported}

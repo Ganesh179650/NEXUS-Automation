@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart2, Download, Thermometer, Droplets, Flame, FileCode, Printer, FileText, ChevronDown } from 'lucide-react';
 import SensorChart from '../components/SensorChart';
 
-export default function Analytics({ history, getStats, onClearHistory, onNotify }) {
+export default function Analytics({ history, getStats, onClearHistory, onNotify, isDeviceOffline = false }) {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -247,25 +247,25 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify 
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.95 }}
                 transition={{ duration: 0.15 }}
-                className="absolute right-0 mt-2 w-52 bg-slate-900/95 border border-slate-700/80 rounded-xl shadow-2xl backdrop-blur-xl z-50 overflow-hidden py-1"
+                className="absolute right-0 mt-2 w-52 export-dropdown-menu rounded-xl shadow-2xl backdrop-blur-xl z-50 overflow-hidden py-1.5"
               >
                 <button
                   onClick={exportPDF}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-cyan-500/15 hover:text-cyan-300 transition-colors text-left cursor-pointer"
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-pdf transition-colors text-left cursor-pointer"
                 >
-                  <Printer className="w-4 h-4 text-cyan-400" /> Save as PDF (.pdf)
+                  <Printer className="w-4 h-4 text-cyan-400 shrink-0" /> Save as PDF (.pdf)
                 </button>
                 <button
                   onClick={exportXML}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-amber-500/15 hover:text-amber-300 transition-colors text-left cursor-pointer"
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-xml transition-colors text-left cursor-pointer"
                 >
-                  <FileCode className="w-4 h-4 text-amber-400" /> Export XML (.xml)
+                  <FileCode className="w-4 h-4 text-amber-400 shrink-0" /> Export XML (.xml)
                 </button>
                 <button
                   onClick={exportCSV}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-emerald-500/15 hover:text-emerald-300 transition-colors text-left cursor-pointer"
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-csv transition-colors text-left cursor-pointer"
                 >
-                  <FileText className="w-4 h-4 text-emerald-400" /> Export CSV (.csv)
+                  <FileText className="w-4 h-4 text-emerald-400 shrink-0" /> Export CSV (.csv)
                 </button>
               </motion.div>
             )}
@@ -275,7 +275,7 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify 
 
       {/* Main Analytics Chart */}
       <motion.div variants={item}>
-        <SensorChart history={history} metric="all" title="MULTI-SENSOR TELEMETRY TIMELINE" onClearHistory={onClearHistory} />
+        <SensorChart history={history} metric="all" title="MULTI-SENSOR TELEMETRY TIMELINE" onClearHistory={onClearHistory} onNotify={onNotify} isDeviceOffline={isDeviceOffline} />
       </motion.div>
 
       {/* Statistical Summary Grid */}

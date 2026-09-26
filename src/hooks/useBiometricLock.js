@@ -221,7 +221,7 @@ export function useBiometricLock() {
     }
   }, [isEnabled]);
 
-  // PhonePe-style Background Auto-Lock Listener:
+  // Background Auto-Lock Listener:
   // Immediately locks when phone is locked, app is minimized, or user switches tabs
   useEffect(() => {
     if (!isEnabled) return;

@@ -36,7 +36,7 @@ export default function AppLockOverlay({
       setEnteredPin('');
       setPinError('');
       setBioError('');
-      // Auto-trigger biometric prompt similar to PhonePe
+      // Auto-trigger biometric prompt on lock overlay mount
       triggerBiometricAuth();
     }
   }, [isLocked, triggerBiometricAuth]);

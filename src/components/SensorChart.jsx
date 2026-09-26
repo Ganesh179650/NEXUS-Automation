@@ -202,8 +202,8 @@ export default function SensorChart({
       const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const dateStr = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-      const offlinePoint = {
-        id: `offline-${now}`,
+      const nowOfflinePoint = {
+        id: `offline-now-${now}`,
         timestamp: now,
         time: timeStr,
         dateStr,
@@ -213,15 +213,51 @@ export default function SensorChart({
       };
 
       if (baseData.length === 0) {
-        return [offlinePoint];
+        return [nowOfflinePoint];
       }
 
       const lastPoint = baseData[baseData.length - 1];
+
+      // If lastPoint in baseData is already an offline point (0 temp & 0 humidity)
       if (lastPoint && lastPoint.temp === 0 && lastPoint.humidity === 0) {
-        return baseData;
+        const updated = [...baseData];
+        if (now - lastPoint.timestamp > 1500) {
+          updated.push(nowOfflinePoint);
+        } else {
+          updated[updated.length - 1] = {
+            ...lastPoint,
+            timestamp: now,
+            time: timeStr,
+            dateStr,
+            temp: 0,
+            humidity: 0,
+            gas: 0,
+          };
+        }
+        return updated;
       }
 
-      return [...baseData, offlinePoint];
+      // If lastPoint was a valid online reading, create a drop point to 0 right after lastPoint
+      const dropTime = Math.min(now, (lastPoint.timestamp || now) + 2000);
+      const dropDateObj = new Date(dropTime);
+      const dropTimeStr = dropDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const dropDateStr = dropDateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+      const dropPoint = {
+        id: `offline-drop-${dropTime}`,
+        timestamp: dropTime,
+        time: dropTimeStr,
+        dateStr: dropDateStr,
+        temp: 0,
+        humidity: 0,
+        gas: 0,
+      };
+
+      if (now - dropTime > 2000) {
+        return [...baseData, dropPoint, nowOfflinePoint];
+      }
+
+      return [...baseData, dropPoint];
     }
 
     return baseData;
@@ -534,25 +570,25 @@ export default function SensorChart({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 8, scale: 0.95 }}
                     transition={{ duration: 0.15 }}
-                    className="absolute right-0 mt-2 w-48 sm:w-52 bg-slate-900/95 border border-slate-700/80 rounded-xl shadow-2xl backdrop-blur-xl z-50 overflow-hidden py-1"
+                    className="absolute right-0 mt-2 w-48 sm:w-52 export-dropdown-menu rounded-xl shadow-2xl backdrop-blur-xl z-50 overflow-hidden py-1.5"
                   >
                     <button
                       onClick={exportPDF}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-cyan-500/15 hover:text-cyan-300 transition-colors text-left cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-pdf transition-colors text-left cursor-pointer"
                     >
-                      <Printer className="w-4 h-4 text-cyan-400" /> Save as PDF (.pdf)
+                      <Printer className="w-4 h-4 text-cyan-400 shrink-0" /> Save as PDF (.pdf)
                     </button>
                     <button
                       onClick={exportXML}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-amber-500/15 hover:text-amber-300 transition-colors text-left cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-xml transition-colors text-left cursor-pointer"
                     >
-                      <FileCode className="w-4 h-4 text-amber-400" /> Export XML (.xml)
+                      <FileCode className="w-4 h-4 text-amber-400 shrink-0" /> Export XML (.xml)
                     </button>
                     <button
                       onClick={exportCSV}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-emerald-500/15 hover:text-emerald-300 transition-colors text-left cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold export-dropdown-item export-item-csv transition-colors text-left cursor-pointer"
                     >
-                      <FileText className="w-4 h-4 text-emerald-400" /> Export CSV (.csv)
+                      <FileText className="w-4 h-4 text-emerald-400 shrink-0" /> Export CSV (.csv)
                     </button>
                   </motion.div>
                 )}
