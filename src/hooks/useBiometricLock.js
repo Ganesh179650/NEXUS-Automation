@@ -2,6 +2,26 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const STORAGE_KEY_ENABLED = 'nexus_biometric_enabled';
 const STORAGE_KEY_PIN = 'nexus_biometric_pin';
+const STORAGE_KEY_CRED_ID = 'nexus_biometric_cred_id';
+
+function bufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
+
+function base64ToBuffer(base64) {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
 
 export function useBiometricLock() {
   const [isSupported, setIsSupported] = useState(false);
@@ -69,12 +89,21 @@ export function useBiometricLock() {
             authenticatorSelection: {
               authenticatorAttachment: 'platform',
               userVerification: 'required',
+              residentKey: 'discouraged',
+              requireResidentKey: false,
             },
             timeout: 60000,
           },
         });
 
         if (credential) {
+          if (credential.rawId) {
+            try {
+              localStorage.setItem(STORAGE_KEY_CRED_ID, bufferToBase64(credential.rawId));
+            } catch (e) {
+              console.warn('Could not store rawId:', e);
+            }
+          }
           localStorage.setItem(STORAGE_KEY_ENABLED, 'true');
           setIsEnabled(true);
           setIsLocked(false);
@@ -107,6 +136,7 @@ export function useBiometricLock() {
   // Turn OFF Biometric / App Lock
   const disableBiometricLock = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY_ENABLED);
+    localStorage.removeItem(STORAGE_KEY_CRED_ID);
     setIsEnabled(false);
     setIsLocked(false);
   }, []);
@@ -121,13 +151,44 @@ export function useBiometricLock() {
         const challenge = new Uint8Array(32);
         window.crypto.getRandomValues(challenge);
 
-        const credential = await navigator.credentials.get({
-          publicKey: {
-            challenge,
-            timeout: 60000,
-            userVerification: 'required',
-          },
-        });
+        const publicKeyOpts = {
+          challenge,
+          timeout: 60000,
+          userVerification: 'required',
+        };
+
+        const storedCredId = localStorage.getItem(STORAGE_KEY_CRED_ID);
+        if (storedCredId) {
+          try {
+            publicKeyOpts.allowCredentials = [
+              {
+                id: base64ToBuffer(storedCredId),
+                type: 'public-key',
+                transports: ['internal'],
+              },
+            ];
+          } catch (e) {
+            console.warn('Error parsing stored cred ID:', e);
+          }
+        }
+
+        let credential;
+        try {
+          credential = await navigator.credentials.get({
+            publicKey: publicKeyOpts,
+          });
+        } catch (getErr) {
+          // Fallback if targeted passkey was invalid state
+          if (storedCredId && getErr.name === 'InvalidStateError') {
+            const fallbackOpts = { ...publicKeyOpts };
+            delete fallbackOpts.allowCredentials;
+            credential = await navigator.credentials.get({
+              publicKey: fallbackOpts,
+            });
+          } else {
+            throw getErr;
+          }
+        }
 
         if (credential) {
           setIsLocked(false);

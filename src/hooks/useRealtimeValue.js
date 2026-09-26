@@ -53,6 +53,8 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
     gas: null,
     temperature: null,
     humidity: null,
+    buzzer: null,
+    ping: null,
   });
   const [loading, setLoading] = useState(true);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -79,6 +81,8 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
     gas: undefined,
     temperature: undefined,
     humidity: undefined,
+    buzzer: undefined,
+    ping: undefined,
   });
 
   // Store timestamp of last genuine live update pushed by physical ESP32
@@ -91,6 +95,8 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
     gas: null,
     temperature: null,
     humidity: null,
+    buzzer: null,
+    ping: null,
   });
 
   // Track if any genuine live update has been confirmed from physical ESP32
@@ -105,6 +111,8 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
     gas: 'checking',
     temperature: 'checking',
     humidity: 'checking',
+    buzzer: 'checking',
+    ping: 'checking',
   });
 
   useEffect(() => {
@@ -128,13 +136,15 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
       gas: undefined,
       temperature: undefined,
       humidity: undefined,
+      buzzer: undefined,
+      ping: undefined,
     };
 
     const unsubConn = subscribeToFirebaseConnection((connected) => {
       setIsConnected(connected);
     });
 
-    const paths = ['servo1', 'servo2', 'led1', 'led2', 'motor', 'gas', 'temperature', 'humidity'];
+    const paths = ['servo1', 'servo2', 'led1', 'led2', 'motor', 'gas', 'temperature', 'humidity', 'buzzer', 'ping'];
     const unsubs = paths.map((path) => {
       return subscribeToPath(path, (val) => {
         if (val !== null && val !== undefined) {
@@ -145,13 +155,13 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
             initialSnapshotValuesRef.current[path] = val;
           } else {
             // Subsequent callback for this path.
-            // A genuine live update from ESP32 hardware telemetry is confirmed ONLY if environmental sensor values change
+            // A genuine live update from ESP32 is confirmed if ping heartbeat or sensor values update
             const isValueChanged = val !== initialSnapshotValuesRef.current[path];
-            const isSensorPath = path === 'temperature' || path === 'humidity' || path === 'gas';
+            const isHeartbeatOrSensor = path === 'ping' || path === 'temperature' || path === 'humidity' || path === 'gas';
 
-            if (isValueChanged) {
+            if (isValueChanged || path === 'ping') {
               initialSnapshotValuesRef.current[path] = val;
-              if (isSensorPath) {
+              if (isHeartbeatOrSensor) {
                 lastLiveUpdateRef.current[path] = now;
                 liveConfirmedRef.current = true;
 
@@ -198,22 +208,28 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
           gas: 'checking',
           temperature: 'checking',
           humidity: 'checking',
+          buzzer: 'checking',
+          ping: 'checking',
         });
       } else {
         // Check window has expired OR a live update was confirmed!
+        const pingLive = lastLiveUpdateRef.current.ping;
         const tempLive = lastLiveUpdateRef.current.temperature;
         const humLive = lastLiveUpdateRef.current.humidity;
         const gasLive = lastLiveUpdateRef.current.gas;
 
-        // Check if environmental sensors have received live updates within offlineThresholdMs (15s)
-        const isTempStale = !tempLive || now - tempLive > offlineThresholdMs;
-        const isHumStale = !humLive || now - humLive > offlineThresholdMs;
-        const isGasStale = !gasLive || now - gasLive > offlineThresholdMs;
+        // Check if any of the 4 values (ping, temperature, humidity, gas) has updated within offlineThresholdMs
+        const isPingRecent = pingLive && (now - pingLive <= offlineThresholdMs);
+        const isTempRecent = tempLive && (now - tempLive <= offlineThresholdMs);
+        const isHumRecent = humLive && (now - humLive <= offlineThresholdMs);
+        const isGasRecent = gasLive && (now - gasLive <= offlineThresholdMs);
 
-        // Device is OFFLINE if ALL 3 environmental sensors lack recent live updates
-        const all3Stale = isTempStale && isHumStale && isGasStale;
+        // Device is ONLINE if ANY ONE of the 4 values (ping, temperature, humidity, gas) is updated!
+        // Device is OFFLINE ONLY if ALL 4 values are missing or stale.
+        const isAnyValueLive = isPingRecent || isTempRecent || isHumRecent || isGasRecent;
+        const isOffline = !isAnyValueLive;
 
-        setIsDeviceOffline(all3Stale);
+        setIsDeviceOffline(isOffline);
         setIsCheckingTelemetry(false);
         setStatusDetermined(true);
 
@@ -230,11 +246,12 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
             }
           });
 
-          next.temperature = all3Stale;
-          next.humidity = all3Stale;
-          next.gas = all3Stale;
+          next.temperature = isOffline;
+          next.humidity = isOffline;
+          next.gas = isOffline;
+          next.ping = isOffline;
 
-          return changed || prev.temperature !== all3Stale ? next : prev;
+          return changed || prev.temperature !== isOffline ? next : prev;
         });
       }
     }, 1000);

@@ -100,12 +100,9 @@ export default function AppLockOverlay({
             </div>
           </motion.div>
 
-          <h2 className="text-2xl font-black tracking-tight text-white font-heading mb-1.5 flex items-center gap-2">
+          <h2 className="text-2xl font-black tracking-tight text-white font-heading mb-6 flex items-center gap-2">
             NEXUS <span className="text-cyan-400">APP LOCK</span>
           </h2>
-          <p className="text-xs text-slate-400 max-w-[260px] leading-relaxed mb-6">
-            Protected with PhonePe-style device security & biometric authentication
-          </p>
 
           {!showPinInput ? (
             /* Biometric Primary View */

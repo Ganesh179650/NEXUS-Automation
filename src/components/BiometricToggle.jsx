@@ -156,10 +156,7 @@ export default function BiometricToggle({
 
                 {errorMsg && <p className="text-xs font-semibold text-rose-400">{errorMsg}</p>}
 
-                <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-slate-800">
-                  <strong className="text-cyan-300">Biometric Support:</strong> When enabled, your mobile device's
-                  Fingerprint scanner, Face ID, or Phone Lock Screen will be requested automatically when opening or resuming the app.
-                </p>
+
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button

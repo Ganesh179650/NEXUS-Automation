@@ -85,6 +85,7 @@ export default function SensorChart({
   const presetOptions = useMemo(
     () => [
       { value: '1h', label: 'Last 1 Hour', shortLabel: '1h', ms: 60 * 60 * 1000 },
+      { value: '2h', label: 'Last 2 Hours', shortLabel: '2h', ms: 2 * 60 * 60 * 1000 },
       { value: '6h', label: 'Last 6 Hours', shortLabel: '6h', ms: 6 * 60 * 60 * 1000 },
       { value: '24h', label: 'Last 24 Hours', shortLabel: '24h', ms: 24 * 60 * 60 * 1000 },
       { value: '3d', label: 'Last 3 Days', shortLabel: '3d', ms: 3 * 24 * 60 * 60 * 1000 },
@@ -147,19 +148,22 @@ export default function SensorChart({
     };
   }, [start, end]);
 
-  // Select active data source
+  // Select active data source strictly filtered within [startTime, endTime]
   const activeRecords = useMemo(() => {
-    if (firestoreData.length > 0) {
-      return firestoreData;
+    let records = firestoreData;
+    if (!records || records.length === 0) {
+      records = history || [];
     }
 
     const startTime = start.getTime();
-    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : Infinity);
+    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
 
-    return (history || []).filter((h) => {
-      if (!h.timestamp) return false;
+    const filtered = records.filter((h) => {
+      if (!h || !h.timestamp || typeof h.timestamp !== 'number' || isNaN(h.timestamp)) return false;
       return h.timestamp >= startTime && h.timestamp <= endTime;
     });
+
+    return filtered.sort((a, b) => a.timestamp - b.timestamp);
   }, [firestoreData, history, start, end, liveNow]);
 
   // Downsample data for smooth chart rendering
@@ -223,25 +227,50 @@ export default function SensorChart({
     return baseData;
   }, [activeRecords, rangeFilter, isDeviceOffline, liveNow]);
 
-  // Dynamic X-Axis Domain Bound: automatically adjusts X-axis to actual data bounds so data fills 100% of the chart width
+  // Dynamic X-Axis Domain Bound: automatically aligns to the earliest actual data timestamp
+  // so the chart fills the X-axis starting directly from the initial left boundary without empty gaps.
   const xDomain = useMemo(() => {
-    if (!chartData || chartData.length === 0) {
-      const startMs = start.getTime();
-      const endMs = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
-      return [startMs, endMs];
+    const startMs = start.getTime();
+    const endMs = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
+
+    let effectiveStartMs = startMs;
+    if (chartData && chartData.length > 0) {
+      const firstPointMs = chartData[0]?.timestamp;
+      if (typeof firstPointMs === 'number' && !isNaN(firstPointMs)) {
+        // Adjust start bound to earliest data point if data started after default start time
+        effectiveStartMs = Math.max(startMs, firstPointMs);
+      }
     }
 
-    const firstTs = chartData[0].timestamp;
-    const lastDataTs = chartData[chartData.length - 1].timestamp;
-    const lastTs = end === 'now' ? Math.max(lastDataTs, liveNow) : lastDataTs;
-
-    if (!firstTs || !lastTs || firstTs === lastTs) {
-      const ts = firstTs || Date.now();
-      return [ts - 60000, ts + 60000];
+    let finalEndMs = endMs;
+    if (!effectiveStartMs || !finalEndMs || effectiveStartMs >= finalEndMs) {
+      const now = Date.now();
+      effectiveStartMs = now - 3600 * 1000;
+      finalEndMs = now;
     }
 
-    return [firstTs, lastTs];
-  }, [chartData, start, end, liveNow]);
+    // Ensure at least 60 seconds span for smooth rendering
+    if (finalEndMs - effectiveStartMs < 60000) {
+      effectiveStartMs = finalEndMs - 60000;
+    }
+
+    return [effectiveStartMs, finalEndMs];
+  }, [start, end, liveNow, chartData]);
+
+  // Calculate clean, evenly-spaced time ticks across full X-Axis domain
+  const xAxisTicks = useMemo(() => {
+    const [startMs, endMs] = xDomain;
+    const totalMs = endMs - startMs;
+    if (!startMs || !endMs || totalMs <= 0) return [];
+
+    const numTicks = 6;
+    const intervalMs = totalMs / (numTicks - 1);
+    const result = [];
+    for (let i = 0; i < numTicks; i++) {
+      result.push(Math.round(startMs + i * intervalMs));
+    }
+    return result;
+  }, [xDomain]);
 
   // Comfort climate assessment
   const comfortStatus = useMemo(() => {
@@ -597,13 +626,15 @@ export default function SensorChart({
 
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
 
-              {/* Bound X-Axis dynamically from selected past start time to present now */}
+              {/* Bound X-Axis dynamically from selected past start time to present now with clean synchronized ticks */}
               <XAxis
                 type="number"
                 dataKey="timestamp"
                 scale="time"
                 domain={xDomain}
+                ticks={xAxisTicks}
                 tickFormatter={formatXAxisTick}
+                padding={{ left: 0, right: 0 }}
                 stroke="#64748b"
                 fontSize={10}
                 tickLine={false}

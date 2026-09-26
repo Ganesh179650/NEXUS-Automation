@@ -1,0 +1,329 @@
+#include <WiFi.h>
+#include <Firebase_ESP_Client.h>
+#include <ESP32Servo.h>
+#include <DHT.h>
+
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+#define WIFI_SSID "Gani"
+#define WIFI_PASSWORD "gani@1729"
+
+#define API_KEY "AIzaSyDS4rBkI0m9bF-UaLM3Y97BY-Hd1fm_HdU"
+#define DATABASE_URL "https://automation-b7189-default-rtdb.firebaseio.com/"
+
+#define SERVO1_PIN 25
+#define SERVO2_PIN 26
+#define LED1_PIN 18
+#define LED2_PIN 19
+#define MOTOR_PIN 27
+#define GAS_PIN 34
+#define BUZZER_PIN 14
+#define DHT_PIN 4
+#define DHT_TYPE DHT11
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+Servo servo1;
+Servo servo2;
+DHT dht(DHT_PIN, DHT_TYPE);
+
+int lastServo1Angle = -1;
+int lastServo2Angle = -1;
+int lastLed1 = -1;
+int lastLed2 = -1;
+int lastMotor = -1;
+
+unsigned long lastControlUpdate = 0;
+unsigned long lastGasUpdate = 0;
+unsigned long lastDHTUpdate = 0;
+unsigned long lastHeartbeatUpdate = 0;
+
+const unsigned long controlInterval = 2000;
+const unsigned long gasInterval = 3000;
+const unsigned long dhtInterval = 3000;
+const unsigned long heartbeatInterval = 2000;
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to WiFi");
+
+  unsigned long start = millis();
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+
+    if (millis() - start >= 30000) {
+      Serial.println();
+      Serial.println("WiFi connection timeout");
+      ESP.restart();
+    }
+  }
+
+  Serial.println();
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void setupFirebase() {
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+
+  config.timeout.networkReconnect = 10000;
+  config.timeout.socketConnection = 30000;
+  config.timeout.sslHandshake = 120000;
+  config.timeout.serverResponse = 15000;
+
+  config.timeout.rtdbKeepAlive = 45000;
+  config.timeout.rtdbStreamReconnect = 10000;
+  config.timeout.rtdbStreamError = 3000;
+
+  config.tcp_data_sending_retry = 1;
+
+  config.token_status_callback = tokenStatusCallback;
+
+  if (Firebase.signUp(&config, &auth, "", "")) {
+    Serial.println("Firebase authentication successful");
+  } else {
+    Serial.print("Firebase authentication error: ");
+    Serial.println(config.signer.signupError.message.c_str());
+  }
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  Serial.println("Firebase initialized");
+}
+
+void syncInitialValues() {
+  int value;
+
+  if (Firebase.RTDB.getInt(&fbdo, "/servo1")) {
+    value = constrain(fbdo.intData(), 0, 180);
+    lastServo1Angle = value;
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/servo2")) {
+    value = constrain(fbdo.intData(), 0, 180);
+    lastServo2Angle = value;
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/led1")) {
+    lastLed1 = fbdo.intData();
+    digitalWrite(LED1_PIN, lastLed1 ? HIGH : LOW);
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/led2")) {
+    lastLed2 = fbdo.intData();
+    digitalWrite(LED2_PIN, lastLed2 ? HIGH : LOW);
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/motor")) {
+    lastMotor = fbdo.intData();
+    digitalWrite(MOTOR_PIN, lastMotor ? HIGH : LOW);
+  }
+
+  Serial.println("Firebase values synchronized");
+}
+
+void checkControls() {
+  int value;
+
+  if (Firebase.RTDB.getInt(&fbdo, "/servo1")) {
+    value = constrain(fbdo.intData(), 0, 180);
+
+    if (value != lastServo1Angle) {
+      servo1.write(value);
+      lastServo1Angle = value;
+
+      Serial.print("Servo 1 moved to: ");
+      Serial.println(value);
+    }
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/servo2")) {
+    value = constrain(fbdo.intData(), 0, 180);
+
+    if (value != lastServo2Angle) {
+      servo2.write(value);
+      lastServo2Angle = value;
+
+      Serial.print("Servo 2 moved to: ");
+      Serial.println(value);
+    }
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/led1")) {
+    value = fbdo.intData();
+
+    if (value != lastLed1) {
+      digitalWrite(LED1_PIN, value ? HIGH : LOW);
+      lastLed1 = value;
+
+      Serial.print("LED 1: ");
+      Serial.println(value ? "ON" : "OFF");
+    }
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/led2")) {
+    value = fbdo.intData();
+
+    if (value != lastLed2) {
+      digitalWrite(LED2_PIN, value ? HIGH : LOW);
+      lastLed2 = value;
+
+      Serial.print("LED 2: ");
+      Serial.println(value ? "ON" : "OFF");
+    }
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/motor")) {
+    value = fbdo.intData();
+
+    if (value != lastMotor) {
+      digitalWrite(MOTOR_PIN, value ? HIGH : LOW);
+      lastMotor = value;
+
+      Serial.print("Motor: ");
+      Serial.println(value ? "ON" : "OFF");
+    }
+  }
+}
+
+void sendHeartbeat() {
+  unsigned long uptimeSec = millis() / 1000;
+  if (Firebase.RTDB.setInt(&fbdo, "/ping", uptimeSec)) {
+    // Heartbeat ping sent to Firebase
+  } else {
+    Serial.print("Heartbeat Firebase error: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+void sendGasData() {
+  int gasValue = analogRead(GAS_PIN);
+
+  // Automatic physical buzzer control on Pin D14 (HIGH when gas > 2300, LOW when <= 2300)
+  if (gasValue > 2300) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    Firebase.RTDB.setInt(&fbdo, "/buzzer", 1);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+    Firebase.RTDB.setInt(&fbdo, "/buzzer", 0);
+  }
+
+  if (Firebase.RTDB.setInt(&fbdo, "/gas", gasValue)) {
+    Serial.print("Gas: ");
+    Serial.println(gasValue);
+  } else {
+    Serial.print("Gas Firebase error: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+void sendDHTData() {
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("DHT11 read failed");
+    return;
+  }
+
+  if (Firebase.RTDB.setFloat(&fbdo, "/temperature", temperature)) {
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" C");
+  } else {
+    Serial.print("Temperature Firebase error: ");
+    Serial.println(fbdo.errorReason());
+  }
+
+  if (Firebase.RTDB.setFloat(&fbdo, "/humidity", humidity)) {
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
+  } else {
+    Serial.print("Humidity Firebase error: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(GAS_PIN, INPUT);
+
+  digitalWrite(LED1_PIN, LOW);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(MOTOR_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  servo1.setPeriodHertz(50);
+  servo2.setPeriodHertz(50);
+
+  servo1.attach(SERVO1_PIN, 500, 2400);
+  servo2.attach(SERVO2_PIN, 500, 2400);
+
+  dht.begin();
+
+  Serial.println("Servos initialized");
+  Serial.println("DHT11 initialized");
+  Serial.println("Physical Buzzer on D14 initialized");
+
+  connectWiFi();
+
+  setupFirebase();
+
+  delay(3000);
+
+  syncInitialValues();
+
+  Serial.println("System ready");
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected");
+    connectWiFi();
+  }
+
+  if (!Firebase.ready()) {
+    delay(100);
+    return;
+  }
+
+  if (millis() - lastHeartbeatUpdate >= heartbeatInterval) {
+    lastHeartbeatUpdate = millis();
+    sendHeartbeat();
+  }
+
+  if (millis() - lastControlUpdate >= controlInterval) {
+    lastControlUpdate = millis();
+    checkControls();
+  }
+
+  if (millis() - lastGasUpdate >= gasInterval) {
+    lastGasUpdate = millis();
+    sendGasData();
+  }
+
+  if (millis() - lastDHTUpdate >= dhtInterval) {
+    lastDHTUpdate = millis();
+    sendDHTData();
+  }
+
+  delay(10);
+}
