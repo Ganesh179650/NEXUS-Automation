@@ -20,6 +20,7 @@ const CustomTooltip = ({ active, payload, label }) => {
     const dateObj = timestamp ? new Date(timestamp) : new Date();
     const dateStr = dataPoint.dateStr || dateObj.toLocaleDateString([], { day: '2-digit', month: 'short' });
     const timeStr = dataPoint.time || dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const isOfflinePoint = (dataPoint.temp === 0 || dataPoint.temp === null) && (dataPoint.humidity === 0 || dataPoint.humidity === null);
 
     return (
       <div className="clay-card p-3 border border-cyan-500/30 text-xs shadow-2xl backdrop-blur-xl">
@@ -27,6 +28,12 @@ const CustomTooltip = ({ active, payload, label }) => {
           <span>{dateStr}</span>
           <span className="text-white">{timeStr}</span>
         </p>
+        {isOfflinePoint && (
+          <div className="text-[10px] font-mono text-rose-400 font-bold my-1 py-1 px-2 rounded bg-rose-500/10 border border-rose-500/30 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
+            <span>DEVICE OFFLINE — NO DATA COLLECTED</span>
+          </div>
+        )}
         <div className="space-y-1 mt-1.5 font-mono">
           {payload.map((entry, index) => (
             <div key={index} className="flex items-center justify-between gap-5">
@@ -95,9 +102,9 @@ export default function SensorChart({
     []
   );
 
-  // Determine current active start Date and end (Date or 'now')
+  // Dynamic start Date and end (Date or 'now')
   const { start, end, isLive } = useMemo(() => {
-    const now = Date.now();
+    const now = liveNow || Date.now();
 
     if (rangeFilter === 'custom') {
       const startDate = customStart ? new Date(customStart) : new Date(now - 3600 * 1000);
@@ -115,6 +122,17 @@ export default function SensorChart({
       end: 'now',
       isLive: true,
     };
+  }, [rangeFilter, customStart, customEnd, presetOptions, liveNow]);
+
+  // Stable anchor start date for Firestore query to prevent re-subscribing on every ticker
+  const queryStart = useMemo(() => {
+    const now = Date.now();
+    if (rangeFilter === 'custom') {
+      const startMs = customStart ? new Date(customStart).getTime() : now - 3600 * 1000;
+      return new Date(startMs - 3600 * 1000);
+    }
+    const preset = presetOptions.find((p) => p.value === rangeFilter) || presetOptions[0];
+    return new Date(now - preset.ms * 1.5);
   }, [rangeFilter, customStart, customEnd, presetOptions]);
 
   // Periodic ticker to advance live present right-edge anchor
@@ -131,7 +149,7 @@ export default function SensorChart({
     setLoading(true);
     setError(null);
 
-    const unsubscribe = subscribeToSensorHistory({ start, end }, (records, isLoading, err) => {
+    const unsubscribe = subscribeToSensorHistory({ start: queryStart, end }, (records, isLoading, err) => {
       if (err) {
         setError(err);
         setLoading(false);
@@ -146,29 +164,132 @@ export default function SensorChart({
         unsubscribe();
       }
     };
-  }, [start, end]);
+  }, [queryStart, end]);
 
-  // Select active data source strictly filtered within [startTime, endTime]
+  // Select active data source strictly bounded within [startTime, endTime], merging RTDB/LocalStorage history and Firestore
   const activeRecords = useMemo(() => {
-    let records = firestoreData;
-    if (!records || records.length === 0) {
-      records = history || [];
-    }
+    const combinedMap = new Map();
 
-    const startTime = start.getTime();
-    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
-
-    const filtered = records.filter((h) => {
-      if (!h || !h.timestamp || typeof h.timestamp !== 'number' || isNaN(h.timestamp)) return false;
-      return h.timestamp >= startTime && h.timestamp <= endTime;
+    (history || []).forEach((h) => {
+      if (h && typeof h.timestamp === 'number' && !isNaN(h.timestamp)) {
+        const key = h.id || `${h.timestamp}-${h.temp}-${h.humidity}-${h.gas}`;
+        combinedMap.set(key, h);
+      }
     });
 
-    return filtered.sort((a, b) => a.timestamp - b.timestamp);
-  }, [firestoreData, history, start, end, liveNow]);
+    (firestoreData || []).forEach((f) => {
+      if (f && typeof f.timestamp === 'number' && !isNaN(f.timestamp)) {
+        const key = f.id || `${f.timestamp}-${f.temp}-${f.humidity}-${f.gas}`;
+        combinedMap.set(key, f);
+      }
+    });
+
+    const allRecords = Array.from(combinedMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+    const startTime = start.getTime();
+    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
+    const OFFLINE_GAP_MS = 60000; // 1 minute (60,000ms) threshold for offline state drop to 0
+
+    const insideRange = allRecords.filter((h) => h.timestamp >= startTime && h.timestamp <= endTime);
+    const priorRecords = allRecords.filter((h) => h.timestamp < startTime);
+    const priorRecord = priorRecords.length > 0 ? priorRecords[priorRecords.length - 1] : null;
+
+    const result = [];
+
+    const createPoint = (ts, tempVal, humVal, gasVal, idPrefix = 'pt') => {
+      const d = new Date(ts);
+      return {
+        id: `${idPrefix}-${ts}`,
+        timestamp: ts,
+        time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        dateStr: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+        temp: tempVal,
+        humidity: humVal,
+        gas: gasVal,
+      };
+    };
+
+    if (insideRange.length > 0) {
+      const firstInside = insideRange[0];
+
+      // 1. Handle gap between startTime and firstInside
+      if (firstInside.timestamp > startTime) {
+        if (priorRecord && startTime - priorRecord.timestamp <= OFFLINE_GAP_MS) {
+          // Device was online at startTime with prior record's values
+          result.push(createPoint(startTime, priorRecord.temp, priorRecord.humidity, priorRecord.gas, 'start-online'));
+
+          // Check if device went offline between priorRecord and firstInside
+          if (firstInside.timestamp - priorRecord.timestamp > OFFLINE_GAP_MS) {
+            const dropTs = priorRecord.timestamp + OFFLINE_GAP_MS;
+            if (dropTs > startTime && dropTs < firstInside.timestamp) {
+              result.push(createPoint(dropTs, 0, 0, 0, 'start-drop'));
+            }
+            if (firstInside.timestamp - 1000 > startTime) {
+              result.push(createPoint(firstInside.timestamp - 1000, 0, 0, 0, 'start-offline'));
+            }
+          }
+        } else {
+          // Device was OFFLINE from startTime until firstInside (set 0 for offline period)
+          result.push(createPoint(startTime, 0, 0, 0, 'start-zero'));
+          if (firstInside.timestamp - 1000 > startTime) {
+            result.push(createPoint(firstInside.timestamp - 1000, 0, 0, 0, 'start-pre-rise'));
+          }
+        }
+      }
+
+      // 2. Add points inside range and detect >1 minute offline gaps between readings
+      for (let i = 0; i < insideRange.length; i++) {
+        const curr = insideRange[i];
+
+        if (i > 0) {
+          const prev = insideRange[i - 1];
+          const gap = curr.timestamp - prev.timestamp;
+
+          if (gap > OFFLINE_GAP_MS) {
+            // Gap > 1 minute: Device went offline! Drop values to 0 at 1 minute mark
+            const dropTs = prev.timestamp + OFFLINE_GAP_MS;
+            result.push(createPoint(dropTs, 0, 0, 0, 'gap-drop'));
+            if (curr.timestamp - 1000 > dropTs) {
+              result.push(createPoint(curr.timestamp - 1000, 0, 0, 0, 'gap-off'));
+            }
+          }
+        }
+
+        result.push(curr);
+      }
+
+      // 3. Handle gap between lastInside and endTime
+      const lastInside = insideRange[insideRange.length - 1];
+      const gapToEnd = endTime - lastInside.timestamp;
+
+      if (isDeviceOffline || gapToEnd > OFFLINE_GAP_MS) {
+        // Device is currently OFFLINE or hasn't updated in > 1 minute
+        const dropTs = Math.min(endTime, lastInside.timestamp + (isDeviceOffline ? 2000 : OFFLINE_GAP_MS));
+        result.push(createPoint(dropTs, 0, 0, 0, 'end-drop'));
+        if (endTime > dropTs) {
+          result.push(createPoint(endTime, 0, 0, 0, 'end-off'));
+        }
+      } else {
+        // Device is active & online up to present
+        result.push(createPoint(endTime, lastInside.temp, lastInside.humidity, lastInside.gas, 'end-online'));
+      }
+    } else if (priorRecord && startTime - priorRecord.timestamp <= OFFLINE_GAP_MS && !isDeviceOffline) {
+      // Prior record exists right before range and device is online
+      result.push(createPoint(startTime, priorRecord.temp, priorRecord.humidity, priorRecord.gas, 'full-prior-start'));
+      result.push(createPoint(endTime, priorRecord.temp, priorRecord.humidity, priorRecord.gas, 'full-prior-end'));
+    } else {
+      // No records in selected range and device was offline: render 0 line across timeline
+      result.push(createPoint(startTime, 0, 0, 0, 'empty-start'));
+      result.push(createPoint(endTime, 0, 0, 0, 'empty-end'));
+    }
+
+    return result.sort((a, b) => a.timestamp - b.timestamp);
+  }, [firestoreData, history, start, end, liveNow, isDeviceOffline]);
 
   // Downsample data for smooth chart rendering
   const chartData = useMemo(() => {
     const raw = activeRecords;
+    if (!raw || raw.length === 0) return [];
+
     const maxPoints = rangeFilter === '7d' ? 180 : rangeFilter === '3d' ? 150 : rangeFilter === '24h' ? 140 : 120;
     let baseData = raw;
     if (raw.length > maxPoints) {
@@ -183,7 +304,16 @@ export default function SensorChart({
         const avgTemp = temps.length ? Number((temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1)) : null;
         const avgHum = hums.length ? Number((hums.reduce((a, b) => a + b, 0) / hums.length).toFixed(1)) : null;
 
-        const representative = bucket[Math.floor(bucket.length / 2)];
+        // Preserve first bucket's start timestamp and last bucket's end timestamp
+        let representative;
+        if (i === 0) {
+          representative = bucket[0];
+        } else if (i + bucketSize >= raw.length) {
+          representative = bucket[bucket.length - 1];
+        } else {
+          representative = bucket[Math.floor(bucket.length / 2)];
+        }
+
         downsampled.push({
           id: representative.id,
           time: representative.time,
@@ -194,6 +324,33 @@ export default function SensorChart({
         });
       }
       baseData = downsampled;
+    }
+
+    const startTime = start.getTime();
+    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
+
+    // Force boundary points to align exactly with start/end bounds
+    if (baseData.length > 0) {
+      if (baseData[0].timestamp !== startTime) {
+        const d = new Date(startTime);
+        baseData[0] = {
+          ...baseData[0],
+          timestamp: startTime,
+          time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          dateStr: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+        };
+      }
+
+      const lastIdx = baseData.length - 1;
+      if (baseData[lastIdx].timestamp !== endTime && !isDeviceOffline) {
+        const d = new Date(endTime);
+        baseData[lastIdx] = {
+          ...baseData[lastIdx],
+          timestamp: endTime,
+          time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          dateStr: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+        };
+      }
     }
 
     const now = liveNow || Date.now();
@@ -269,22 +426,11 @@ export default function SensorChart({
     return baseData;
   }, [activeRecords, rangeFilter, isDeviceOffline, liveNow]);
 
-  // Dynamic X-Axis Domain Bound: automatically aligns to the earliest actual data timestamp
-  // so the chart fills the X-axis starting directly from the initial left boundary without empty gaps.
+  // Dynamic X-Axis Domain Bound: precisely matches selected timeline start to current present moment
   const xDomain = useMemo(() => {
-    const startMs = start.getTime();
-    const endMs = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
+    let effectiveStartMs = start.getTime();
+    let finalEndMs = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
 
-    let effectiveStartMs = startMs;
-    if (chartData && chartData.length > 0) {
-      const firstPointMs = chartData[0]?.timestamp;
-      if (typeof firstPointMs === 'number' && !isNaN(firstPointMs)) {
-        // Adjust start bound to earliest data point if data started after default start time
-        effectiveStartMs = Math.max(startMs, firstPointMs);
-      }
-    }
-
-    let finalEndMs = endMs;
     if (!effectiveStartMs || !finalEndMs || effectiveStartMs >= finalEndMs) {
       const now = Date.now();
       effectiveStartMs = now - 3600 * 1000;
@@ -297,7 +443,7 @@ export default function SensorChart({
     }
 
     return [effectiveStartMs, finalEndMs];
-  }, [start, end, liveNow, chartData]);
+  }, [start, end, liveNow]);
 
   // Calculate clean, evenly-spaced time ticks across full X-Axis domain
   const xAxisTicks = useMemo(() => {
@@ -332,7 +478,7 @@ export default function SensorChart({
     return 'Optimal Comfort';
   }, [activeRecords]);
 
-  // Export telemetry records (CSV, XML, PDF) with 30s staleness offline check
+  // Export telemetry records (CSV, XML, PDF) with offline status tracking
   const getRecordsToExport = () => {
     let records = [...(activeRecords && activeRecords.length > 0 ? activeRecords : (history || []))];
     if (records.length > 0) {
@@ -369,6 +515,13 @@ export default function SensorChart({
     };
   };
 
+  const getRecordStatus = (h) => {
+    if ((h.temp === 0 || h.temp === null || h.temp === undefined) && (h.humidity === 0 || h.humidity === null || h.humidity === undefined)) {
+      return 'OFFLINE';
+    }
+    return 'ONLINE';
+  };
+
   const exportCSV = () => {
     setIsExportOpen(false);
     const records = getRecordsToExport();
@@ -377,10 +530,19 @@ export default function SensorChart({
       return;
     }
 
-    const headers = ['Date', 'Time', 'Timestamp', 'Temperature (°C)', 'Humidity (%)', 'Gas (Raw ADC)'];
+    const headers = ['Date', 'Time', 'Timestamp', 'Device Status', 'Temperature (°C)', 'Humidity (%)', 'Gas (Raw ADC)'];
     const rows = records.map((h) => {
       const { dateStr, timeStr } = getRecordDateTime(h);
-      return [dateStr, timeStr, h.timestamp || '', h.temp ?? '', h.humidity ?? '', h.gas ?? ''];
+      const status = getRecordStatus(h);
+      return [
+        dateStr,
+        timeStr,
+        h.timestamp || '',
+        status,
+        h.temp !== null && h.temp !== undefined ? h.temp : 0,
+        h.humidity !== null && h.humidity !== undefined ? h.humidity : 0,
+        h.gas !== null && h.gas !== undefined ? h.gas : 0,
+      ];
     });
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 
@@ -406,13 +568,15 @@ export default function SensorChart({
     const xmlRecords = records
       .map((h) => {
         const { dateStr, timeStr } = getRecordDateTime(h);
+        const status = getRecordStatus(h);
         return `    <record>
       <date>${dateStr}</date>
       <time>${timeStr}</time>
       <timestamp>${h.timestamp ?? ''}</timestamp>
-      <temperature_C>${h.temp ?? ''}</temperature_C>
-      <humidity_percent>${h.humidity ?? ''}</humidity_percent>
-      <gas_adc>${h.gas ?? ''}</gas_adc>
+      <device_status>${status}</device_status>
+      <temperature_C>${h.temp ?? 0}</temperature_C>
+      <humidity_percent>${h.humidity ?? 0}</humidity_percent>
+      <gas_adc>${h.gas ?? 0}</gas_adc>
     </record>`;
       })
       .join('\n');
@@ -449,25 +613,33 @@ export default function SensorChart({
     const rowsHtml = records
       .map((h, index) => {
         const { dateStr, timeStr } = getRecordDateTime(h);
+        const status = getRecordStatus(h);
+        const isOffline = status === 'OFFLINE';
+
+        const statusBadge = isOffline
+          ? `<span style="background: #ffe4e6; color: #e11d48; padding: 2px 8px; border-radius: 9999px; font-weight: 700; font-size: 10px; display: inline-block;">OFFLINE</span>`
+          : `<span style="background: #d1fae5; color: #059669; padding: 2px 8px; border-radius: 9999px; font-weight: 700; font-size: 10px; display: inline-block;">ONLINE</span>`;
+
         return `
         <tr style="background-color: ${index % 2 === 0 ? '#f8fafc' : '#ffffff'};">
           <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-family: monospace;">${dateStr}</td>
           <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-family: monospace;">${timeStr}</td>
-          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${h.temp !== null && h.temp !== undefined ? `${h.temp} °C` : '-'}</td>
-          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${h.humidity !== null && h.humidity !== undefined ? `${h.humidity} %` : '-'}</td>
-          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${h.gas !== null && h.gas !== undefined ? `${h.gas} ADC` : '-'}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${statusBadge}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0; color: ${isOffline ? '#94a3b8' : '#0f172a'};">${h.temp !== null && h.temp !== undefined ? `${h.temp} °C` : '0 °C'}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0; color: ${isOffline ? '#94a3b8' : '#0f172a'};">${h.humidity !== null && h.humidity !== undefined ? `${h.humidity} %` : '0 %'}</td>
+          <td style="padding: 8px 12px; border: 1px solid #e2e8f0; color: ${isOffline ? '#94a3b8' : '#0f172a'};">${h.gas !== null && h.gas !== undefined ? `${h.gas} ADC` : '0 ADC'}</td>
         </tr>
       `;
       })
       .join('');
 
-    const validTemps = records.map((d) => d.temp).filter((v) => typeof v === 'number' && !isNaN(v));
-    const validHums = records.map((d) => d.humidity).filter((v) => typeof v === 'number' && !isNaN(v));
-    const validGas = records.map((d) => d.gas).filter((v) => typeof v === 'number' && !isNaN(v));
+    const validTemps = records.map((d) => d.temp).filter((v) => typeof v === 'number' && !isNaN(v) && v > 0);
+    const validHums = records.map((d) => d.humidity).filter((v) => typeof v === 'number' && !isNaN(v) && v > 0);
+    const validGas = records.map((d) => d.gas).filter((v) => typeof v === 'number' && !isNaN(v) && v > 0);
 
-    const avgTemp = validTemps.length ? (validTemps.reduce((a, b) => a + b, 0) / validTemps.length).toFixed(1) : '--';
-    const avgHum = validHums.length ? (validHums.reduce((a, b) => a + b, 0) / validHums.length).toFixed(1) : '--';
-    const avgGas = validGas.length ? (validGas.reduce((a, b) => a + b, 0) / validGas.length).toFixed(1) : '--';
+    const avgTemp = validTemps.length ? (validTemps.reduce((a, b) => a + b, 0) / validTemps.length).toFixed(1) : '0';
+    const avgHum = validHums.length ? (validHums.reduce((a, b) => a + b, 0) / validHums.length).toFixed(1) : '0';
+    const avgGas = validGas.length ? (validGas.reduce((a, b) => a + b, 0) / validGas.length).toFixed(1) : '0';
 
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -502,15 +674,15 @@ export default function SensorChart({
 
           <div class="stats-grid">
             <div class="stat-box">
-              <div class="stat-label">Avg Temperature</div>
+              <div class="stat-label">Avg Temperature (Active)</div>
               <div class="stat-val" style="color: #d97706;">${avgTemp} °C</div>
             </div>
             <div class="stat-box">
-              <div class="stat-label">Avg Humidity</div>
+              <div class="stat-label">Avg Humidity (Active)</div>
               <div class="stat-val" style="color: #0284c7;">${avgHum} %</div>
             </div>
             <div class="stat-box">
-              <div class="stat-label">Avg Gas ADC</div>
+              <div class="stat-label">Avg Gas ADC (Active)</div>
               <div class="stat-val" style="color: #e11d48;">${avgGas} ADC</div>
             </div>
           </div>
@@ -521,6 +693,7 @@ export default function SensorChart({
               <tr>
                 <th>Date</th>
                 <th>Time</th>
+                <th>Device Status</th>
                 <th>Temperature (°C)</th>
                 <th>Humidity (%)</th>
                 <th>Gas ADC</th>
