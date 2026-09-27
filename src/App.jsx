@@ -37,7 +37,7 @@ export default function App() {
   const { history, getStats, clearHistory } = useSessionHistory(data.temperature, data.humidity, data.gas);
   const { reduceMotion, toggleReducedMotion } = useReducedMotion();
 
-  // Mobile Gas Leak Alarm (> 2300 ADC) with Phone Vibration & Buzzer Siren
+  // Mobile Gas Leak Alarm (> 1500 ADC) with Phone Vibration & Buzzer Siren
   const gasAlarm = useGasAlarm(data.gas, isDeviceOffline);
 
   // Non-blocking toast notifier
@@ -79,7 +79,11 @@ export default function App() {
       />
 
       {/* PWA Floating Install Prompt */}
-      <InstallPrompt />
+      <InstallPrompt
+        isDashboardPage={location.pathname === '/dashboard'}
+        isInitialLoading={isInitialLoading}
+        onNotify={addToast}
+      />
 
       {/* Noise Texture Overlay */}
       <div className="fixed inset-0 bg-noise pointer-events-none z-10" />

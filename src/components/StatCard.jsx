@@ -135,17 +135,17 @@ export default function StatCard({
 
       {stats && (
         <div className="mt-2 pt-2 border-t border-slate-800/80 grid grid-cols-3 gap-1 text-center font-mono">
-          <div className="p-1 rounded-lg bg-slate-900/70 border border-slate-800/80">
-            <span className="text-[8px] sm:text-[9px] text-slate-400 block font-semibold">MIN</span>
-            <span className="text-[9px] sm:text-xs font-bold text-slate-200 tabular-nums">{stats.min ?? '--'}</span>
+          <div className="p-1 rounded-lg clay-stat-box">
+            <span className="text-[8px] sm:text-[9px] block font-semibold tracking-wider stat-label">MIN</span>
+            <span className="text-[9px] sm:text-xs font-bold tabular-nums stat-value">{stats.min ?? '--'}</span>
           </div>
-          <div className="p-1 rounded-lg bg-slate-900/70 border border-slate-800/80">
-            <span className="text-[8px] sm:text-[9px] text-slate-400 block font-semibold">AVG</span>
-            <span className="text-[9px] sm:text-xs font-bold text-slate-200 tabular-nums">{stats.avg ?? '--'}</span>
+          <div className="p-1 rounded-lg clay-stat-box">
+            <span className="text-[8px] sm:text-[9px] block font-semibold tracking-wider stat-label">AVG</span>
+            <span className="text-[9px] sm:text-xs font-bold tabular-nums stat-value">{stats.avg ?? '--'}</span>
           </div>
-          <div className="p-1 rounded-lg bg-slate-900/70 border border-slate-800/80">
-            <span className="text-[8px] sm:text-[9px] text-slate-400 block font-semibold">MAX</span>
-            <span className="text-[9px] sm:text-xs font-bold text-slate-200 tabular-nums">{stats.max ?? '--'}</span>
+          <div className="p-1 rounded-lg clay-stat-box">
+            <span className="text-[8px] sm:text-[9px] block font-semibold tracking-wider stat-label">MAX</span>
+            <span className="text-[9px] sm:text-xs font-bold tabular-nums stat-value">{stats.max ?? '--'}</span>
           </div>
         </div>
       )}

@@ -256,11 +256,38 @@ export function useAllIoTValues(offlineThresholdMs = 17000, initialCheckMs = 700
       }
     }, 1000);
 
+    // Background / Screen Lock visibility listener to trigger instant telemetry re-sync
+    const handleVisibilitySync = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        const pingLive = lastLiveUpdateRef.current.ping;
+        const tempLive = lastLiveUpdateRef.current.temperature;
+        const humLive = lastLiveUpdateRef.current.humidity;
+        const gasLive = lastLiveUpdateRef.current.gas;
+        const isAnyValueLive =
+          (pingLive && now - pingLive <= offlineThresholdMs) ||
+          (tempLive && now - tempLive <= offlineThresholdMs) ||
+          (humLive && now - humLive <= offlineThresholdMs) ||
+          (gasLive && now - gasLive <= offlineThresholdMs);
+
+        if (isAnyValueLive) {
+          setIsDeviceOffline(false);
+          setIsCheckingTelemetry(false);
+          setStatusDetermined(true);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilitySync);
+    window.addEventListener('focus', handleVisibilitySync);
+
     return () => {
       clearTimeout(initialLoadingTimer);
       unsubConn();
       unsubs.forEach((unsub) => unsub());
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibilitySync);
+      window.removeEventListener('focus', handleVisibilitySync);
     };
   }, [offlineThresholdMs, initialCheckMs]);
 

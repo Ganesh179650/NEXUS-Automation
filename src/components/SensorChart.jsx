@@ -196,8 +196,14 @@ export default function SensorChart({
       baseData = downsampled;
     }
 
-    if (isDeviceOffline) {
-      const now = liveNow || Date.now();
+    const now = liveNow || Date.now();
+    const lastRecord = baseData && baseData.length > 0 ? baseData[baseData.length - 1] : null;
+    const timeSinceLastUpdate = lastRecord && typeof lastRecord.timestamp === 'number' ? now - lastRecord.timestamp : Infinity;
+
+    // Trigger 30-second staleness drop to 0 if values stop updating within 30s OR if device is offline
+    const isStale30s = isDeviceOffline || (lastRecord && timeSinceLastUpdate > 30000);
+
+    if (isStale30s) {
       const dateObj = new Date(now);
       const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const dateStr = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -218,8 +224,8 @@ export default function SensorChart({
 
       const lastPoint = baseData[baseData.length - 1];
 
-      // If lastPoint in baseData is already an offline point (0 temp & 0 humidity)
-      if (lastPoint && lastPoint.temp === 0 && lastPoint.humidity === 0) {
+      // If lastPoint in baseData is already an offline point (0 temp & 0 humidity & 0 gas)
+      if (lastPoint && lastPoint.temp === 0 && lastPoint.humidity === 0 && (lastPoint.gas === 0 || lastPoint.gas === undefined)) {
         const updated = [...baseData];
         if (now - lastPoint.timestamp > 1500) {
           updated.push(nowOfflinePoint);
@@ -237,8 +243,8 @@ export default function SensorChart({
         return updated;
       }
 
-      // If lastPoint was a valid online reading, create a drop point to 0 right after lastPoint
-      const dropTime = Math.min(now, (lastPoint.timestamp || now) + 2000);
+      // Create a drop point to 0 exactly 30 seconds after last update
+      const dropTime = Math.min(now, (lastPoint.timestamp || now) + (timeSinceLastUpdate > 30000 ? 30000 : 2000));
       const dropDateObj = new Date(dropTime);
       const dropTimeStr = dropDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const dropDateStr = dropDateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -326,10 +332,28 @@ export default function SensorChart({
     return 'Optimal Comfort';
   }, [activeRecords]);
 
-  // Export telemetry records (CSV, XML, PDF)
+  // Export telemetry records (CSV, XML, PDF) with 30s staleness offline check
   const getRecordsToExport = () => {
-    if (activeRecords && activeRecords.length > 0) return activeRecords;
-    return history || [];
+    let records = [...(activeRecords && activeRecords.length > 0 ? activeRecords : (history || []))];
+    if (records.length > 0) {
+      const lastRec = records[records.length - 1];
+      const now = Date.now();
+      const timeSinceLastUpdate = lastRec && typeof lastRec.timestamp === 'number' ? now - lastRec.timestamp : Infinity;
+
+      if (isDeviceOffline || timeSinceLastUpdate > 30000) {
+        const d = new Date(now);
+        records.push({
+          id: `export-offline-${now}`,
+          timestamp: now,
+          dateStr: d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }),
+          time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          temp: 0,
+          humidity: 0,
+          gas: 0,
+        });
+      }
+    }
+    return records;
   };
 
   const getRecordDateTime = (h) => {

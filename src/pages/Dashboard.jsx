@@ -249,7 +249,7 @@ export default function Dashboard({
           <StatCard
             title="DOOR 1"
             value={door1Open ? 'OPEN' : 'CLOSED'}
-            unit={data.servo1 !== null ? `(${data.servo1}°)` : ''}
+            unit=""
             subtitle=""
             icon={door1Open ? DoorOpen : DoorClosed}
             accentColor="violet"
@@ -264,7 +264,7 @@ export default function Dashboard({
           <StatCard
             title="DOOR 2"
             value={door2Open ? 'OPEN' : 'CLOSED'}
-            unit={data.servo2 !== null ? `(${data.servo2}°)` : ''}
+            unit=""
             subtitle=""
             icon={door2Open ? DoorOpen : DoorClosed}
             accentColor="cyan"

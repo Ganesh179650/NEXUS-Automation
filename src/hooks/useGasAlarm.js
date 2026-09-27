@@ -1,14 +1,86 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 /**
- * Custom hook for High Gas Sensor (> 2300 ADC) Mobile Alert, Vibration, and Buzzer Siren.
- * Designed specifically for installed Progressive Web Apps (PWA standalone mode),
- * with support for AudioContext siren synthesis, phone vibration API, and system notifications.
+ * Helper to write string into DataView for WAV RIFF header
+ */
+function writeWavString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+/**
+ * Programmatically synthesizes a 1-second 44.1kHz 16-bit PCM WAV dual-tone siren (880Hz <-> 523Hz) Data URI.
+ * HTML5 <audio> elements playing this WAV Data URI continue to play continuously in the background
+ * and when the mobile phone screen is locked.
+ */
+function createSirenWavDataUri() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const sampleRate = 44100;
+    const numSamples = sampleRate * 1; // 1 second loop
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+
+    // RIFF Header
+    writeWavString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeWavString(view, 8, 'WAVE');
+
+    // fmt subchunk
+    writeWavString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, 1, true); // Mono channel
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // 16-bit depth
+
+    // data subchunk
+    writeWavString(view, 36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+
+    // Alternating 880Hz / 523.25Hz siren wave PCM data
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / sampleRate;
+      const freq = (t % 0.5) < 0.25 ? 880 : 523.25;
+      const sample = Math.sin(2 * Math.PI * freq * t);
+      const intSample = Math.floor(sample * 30000);
+      view.setInt16(44 + i * 2, intSample, true);
+    }
+
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunk = 8192;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return 'data:audio/wav;base64,' + window.btoa(binary);
+  } catch (e) {
+    console.error('Failed to generate emergency siren WAV Data URI:', e);
+    return '';
+  }
+}
+
+/**
+ * Custom hook for High Gas Sensor (> 1500 ADC) Alert, Phone Vibration, and Emergency Siren.
+ * Supports continuous background monitoring, lock-screen siren audio playback (HTML5 Audio + MediaSession),
+ * mobile phone vibration API, and Service Worker lock-screen notifications.
  */
 export function useGasAlarm(gasValue, isDeviceOffline = false) {
-  const [alarmThreshold, setAlarmThreshold] = useState(2300);
+  const [alarmThreshold, setAlarmThreshold] = useState(1500);
   const [isSilenced, setIsSilenced] = useState(false);
-  const [pwaOnlyMode, setPwaOnlyMode] = useState(true); // Only trigger when installed as app
+  const [pwaOnlyMode, setPwaOnlyMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return (
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true ||
+        document.referrer.includes('android-app://')
+      );
+    }
+    return false;
+  });
   const [isStandalone, setIsStandalone] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState('default');
   const [audioUnlocked, setAudioUnlocked] = useState(false);
@@ -17,9 +89,31 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
   const audioCtxRef = useRef(null);
   const oscRef = useRef(null);
   const gainRef = useRef(null);
+  const bgAudioRef = useRef(null);
   const sirenIntervalRef = useRef(null);
   const vibrationIntervalRef = useRef(null);
   const lastNotifiedValueRef = useRef(null);
+
+  // Initialize HTML5 Background Siren Audio Element (works in background & lock screen)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const wavUri = createSirenWavDataUri();
+      if (wavUri) {
+        const audio = new Audio(wavUri);
+        audio.loop = true;
+        audio.volume = 1.0;
+        bgAudioRef.current = audio;
+      }
+    }
+    return () => {
+      if (bgAudioRef.current) {
+        try {
+          bgAudioRef.current.pause();
+          bgAudioRef.current = null;
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   // 1. Detect Standalone PWA mode
   useEffect(() => {
@@ -29,6 +123,9 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
         window.navigator.standalone === true ||
         document.referrer.includes('android-app://');
       setIsStandalone(standalone);
+      if (standalone) {
+        setPwaOnlyMode(true);
+      }
     };
 
     checkStandalone();
@@ -39,7 +136,6 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
 
     if (typeof window !== 'undefined' && 'Notification' in window) {
       setNotificationPermission(Notification.permission);
-      // Auto-request lock screen notification permission if running in installed PWA app mode
       if (
         (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) &&
         Notification.permission === 'default'
@@ -71,7 +167,7 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
     return 'denied';
   }, []);
 
-  // 3. Web Audio API Emergency Siren Synthesizer (Buzzer Sound)
+  // 3. Foreground Web Audio API Synthesizer
   const startBuzzerSound = useCallback(() => {
     try {
       if (!audioCtxRef.current) {
@@ -86,7 +182,6 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
 
       setAudioUnlocked(true);
 
-      // Stop existing oscillator if any
       if (oscRef.current) {
         try {
           oscRef.current.stop();
@@ -99,10 +194,10 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
       const gain = ctx.createGain();
 
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // High pitch A5 siren base
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
 
       gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.05); // Volume curve
+      gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.05);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -111,7 +206,6 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
       oscRef.current = osc;
       gainRef.current = gain;
 
-      // Pulsing two-tone siren effect (880Hz <-> 523Hz)
       let highTone = true;
       if (sirenIntervalRef.current) clearInterval(sirenIntervalRef.current);
       sirenIntervalRef.current = setInterval(() => {
@@ -122,7 +216,7 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
         }
       }, 250);
     } catch (e) {
-      console.error('Audio synthesizer error:', e);
+      console.error('Foreground Audio synthesizer error:', e);
     }
   }, []);
 
@@ -150,12 +244,53 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
     }
   }, []);
 
-  // 4. Mobile Hardware Vibration API
+  // 4. Background HTML5 Emergency Audio Siren (plays in background & lock screen)
+  const startBackgroundSiren = useCallback(() => {
+    try {
+      if (bgAudioRef.current) {
+        bgAudioRef.current.currentTime = 0;
+        bgAudioRef.current.volume = 1.0;
+        const playPromise = bgAudioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((err) => {
+            console.warn('Background HTML5 siren audio playback pending gesture unlock:', err);
+          });
+        }
+      }
+      if (typeof window !== 'undefined' && 'navigator' in window && 'mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: '🚨 DANGER: HIGH GAS LEAK DETECTED!',
+          artist: 'NEXUS HOME IoT Safety Monitor',
+          album: 'High Gas Level (> 1500 ADC) Emergency Siren',
+          artwork: [
+            { src: '/App_image.png', sizes: '192x192', type: 'image/png' },
+            { src: '/App_image.png', sizes: '512x512', type: 'image/png' },
+          ],
+        });
+        navigator.mediaSession.playbackState = 'playing';
+      }
+    } catch (e) {
+      console.error('Failed to trigger background HTML5 siren:', e);
+    }
+  }, []);
+
+  const stopBackgroundSiren = useCallback(() => {
+    try {
+      if (bgAudioRef.current) {
+        bgAudioRef.current.pause();
+        bgAudioRef.current.currentTime = 0;
+      }
+      if (typeof window !== 'undefined' && 'navigator' in window && 'mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'none';
+      }
+    } catch (_) {}
+  }, []);
+
+  // 5. Mobile Hardware Vibration API
   const startVibration = useCallback(() => {
     if (typeof window !== 'undefined' && 'navigator' in window && 'vibrate' in navigator) {
       const triggerVibe = () => {
         try {
-          // Urgent alarm pattern: 600ms vibrate, 200ms pause, 600ms vibrate, 200ms pause, 1000ms vibrate
           navigator.vibrate([600, 200, 600, 200, 1000]);
         } catch (e) {
           console.warn('Vibration failed', e);
@@ -175,21 +310,18 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
     }
     if (typeof window !== 'undefined' && 'navigator' in window && 'vibrate' in navigator) {
       try {
-        navigator.vibrate(0); // Cancel all vibrations
+        navigator.vibrate(0);
       } catch (_) {}
     }
   }, []);
 
-  // 5. Check if Alarm Condition is Active
+  // 6. Check if Alarm Condition is Active
   const numGas = Number(gasValue);
   const isThresholdExceeded = !isDeviceOffline && !isNaN(numGas) && numGas > alarmThreshold;
-  
-  // Requirement: If pwaOnlyMode is ON, alert triggers ONLY when app is installed (standalone mode).
-  // If pwaOnlyMode is OFF, alert triggers in browser tabs as well.
   const isAppCriteriaMet = !pwaOnlyMode || isStandalone;
   const isAlarmTriggered = (isThresholdExceeded || isTesting) && isAppCriteriaMet;
 
-  // 6. Reset Silence Flag when Gas drops back to normal safety levels
+  // 7. Reset Silence Flag when Gas drops back to normal safety levels
   useEffect(() => {
     if (!isThresholdExceeded && !isTesting) {
       setIsSilenced(false);
@@ -197,16 +329,19 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
     }
   }, [isThresholdExceeded, isTesting]);
 
-  // 7. Handle Siren, Vibration, and Push Notification Triggers
+  // 8. Handle Siren, Vibration, and Push Notification Triggers
   useEffect(() => {
     if (isAlarmTriggered && !isSilenced) {
-      // Start Phone Audio Buzzer Siren
+      // Start Foreground Web Audio Siren
       startBuzzerSound();
+
+      // Start Lock Screen / Background HTML5 Audio Siren
+      startBackgroundSiren();
 
       // Start Mobile Phone Vibration
       startVibration();
 
-      // Send Native Lock-Screen System Push Notification (works when app is backgrounded / screen is locked)
+      // Send Native Lock-Screen System Push Notification
       if (
         typeof window !== 'undefined' &&
         'Notification' in window &&
@@ -222,12 +357,11 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
             badge: '/App_image.png',
             tag: 'gas-leak-alert',
             renotify: true,
-            requireInteraction: true, // Keeps notification persistent on lock screen / drawer like Instagram & WhatsApp
+            requireInteraction: true,
             vibrate: [600, 200, 600, 200, 1000],
             data: { url: '/dashboard' },
           };
 
-          // Priority 1: Service Worker Lock-Screen Notification (works when app is closed / backgrounded / phone locked)
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.ready
               .then((reg) => {
@@ -251,23 +385,69 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
       }
     } else {
       stopBuzzerSound();
+      stopBackgroundSiren();
       stopVibration();
     }
 
     return () => {
       stopBuzzerSound();
+      stopBackgroundSiren();
       stopVibration();
     };
-  }, [isAlarmTriggered, isSilenced, numGas, alarmThreshold, isTesting, startBuzzerSound, stopBuzzerSound, startVibration, stopVibration]);
+  }, [isAlarmTriggered, isSilenced, numGas, alarmThreshold, isTesting, startBuzzerSound, startBackgroundSiren, stopBuzzerSound, stopBackgroundSiren, startVibration, stopVibration]);
 
-  // Silence current alarm
+  // 9. Continuous Lock-Screen & App Background Monitor (Handles document.visibilitychange, focus, blur)
+  useEffect(() => {
+    const handleVisibilityOrLockState = () => {
+      if (isAlarmTriggered && !isSilenced) {
+        startBackgroundSiren();
+        startBuzzerSound();
+        startVibration();
+
+        // Send persistent notification on lock screen if document is hidden
+        if (document.hidden && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          const currentVal = isTesting ? 2450 : numGas;
+          const title = '🚨 DANGER: HIGH GAS LEAK DETECTED!';
+          const options = {
+            body: `Gas Sensor value (${currentVal} ADC) exceeded safety threshold of ${alarmThreshold}! Open windows immediately.`,
+            icon: '/App_image.png',
+            badge: '/App_image.png',
+            tag: 'gas-leak-alert',
+            renotify: true,
+            requireInteraction: true,
+            vibrate: [600, 200, 600, 200, 1000],
+            data: { url: '/dashboard' },
+          };
+
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then((reg) => {
+              if (reg && reg.showNotification) reg.showNotification(title, options);
+            });
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrLockState);
+    window.addEventListener('focus', handleVisibilityOrLockState);
+    window.addEventListener('blur', handleVisibilityOrLockState);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrLockState);
+      window.removeEventListener('focus', handleVisibilityOrLockState);
+      window.removeEventListener('blur', handleVisibilityOrLockState);
+    };
+  }, [isAlarmTriggered, isSilenced, isTesting, numGas, alarmThreshold, startBackgroundSiren, startBuzzerSound, startVibration]);
+
+  // 10. Silence current alarm
   const silenceAlarm = useCallback(() => {
     setIsSilenced(true);
     stopBuzzerSound();
+    stopBackgroundSiren();
     stopVibration();
-  }, [stopBuzzerSound, stopVibration]);
+  }, [stopBuzzerSound, stopBackgroundSiren, stopVibration]);
 
-  // Unlock Audio context on user gesture (e.g. clicking test button or prompt)
+  // 11. Unlock Audio context & HTML5 audio on first user gesture
   const unlockAudioContext = useCallback(() => {
     if (!audioCtxRef.current) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -278,10 +458,35 @@ export function useGasAlarm(gasValue, isDeviceOffline = false) {
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
     }
+    if (bgAudioRef.current) {
+      bgAudioRef.current.play().then(() => {
+        bgAudioRef.current.pause();
+      }).catch(() => {});
+    }
     setAudioUnlocked(true);
   }, []);
 
-  // Test Alarm for 4 seconds
+  // Pre-unlock audio on any user gesture across the app
+  useEffect(() => {
+    const handleGesture = () => {
+      unlockAudioContext();
+      window.removeEventListener('touchstart', handleGesture);
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+    };
+
+    window.addEventListener('touchstart', handleGesture, { once: true });
+    window.addEventListener('click', handleGesture, { once: true });
+    window.addEventListener('keydown', handleGesture, { once: true });
+
+    return () => {
+      window.removeEventListener('touchstart', handleGesture);
+      window.removeEventListener('click', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+    };
+  }, [unlockAudioContext]);
+
+  // 12. Test Alarm for 4.5 seconds
   const testAlarm = useCallback(() => {
     unlockAudioContext();
     setIsTesting(true);

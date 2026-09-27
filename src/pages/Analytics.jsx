@@ -48,15 +48,39 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify,
     };
   };
 
+  const getExportHistory = () => {
+    let records = [...(history || [])];
+    if (records.length > 0) {
+      const lastRec = records[records.length - 1];
+      const now = Date.now();
+      const timeSinceLastUpdate = lastRec && typeof lastRec.timestamp === 'number' ? now - lastRec.timestamp : Infinity;
+
+      if (isDeviceOffline || timeSinceLastUpdate > 30000) {
+        const d = new Date(now);
+        records.push({
+          id: `export-offline-${now}`,
+          timestamp: now,
+          dateStr: d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }),
+          time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          temp: 0,
+          humidity: 0,
+          gas: 0,
+        });
+      }
+    }
+    return records;
+  };
+
   const exportCSV = () => {
     setIsExportOpen(false);
-    if (!history || history.length === 0) {
+    const exportRecords = getExportHistory();
+    if (!exportRecords || exportRecords.length === 0) {
       onNotify('No session history available to export', 'error');
       return;
     }
 
     const headers = ['Date', 'Time', 'Timestamp', 'Temperature (°C)', 'Humidity (%)', 'Gas (Raw ADC)'];
-    const rows = history.map((h) => {
+    const rows = exportRecords.map((h) => {
       const { dateStr, timeStr } = getRecordDateTime(h);
       return [dateStr, timeStr, h.timestamp || '', h.temp ?? '', h.humidity ?? '', h.gas ?? ''];
     });
@@ -75,12 +99,13 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify,
 
   const exportXML = () => {
     setIsExportOpen(false);
-    if (!history || history.length === 0) {
+    const exportRecords = getExportHistory();
+    if (!exportRecords || exportRecords.length === 0) {
       onNotify('No session history available to export', 'error');
       return;
     }
 
-    const xmlRecords = history
+    const xmlRecords = exportRecords
       .map((h) => {
         const { dateStr, timeStr } = getRecordDateTime(h);
         return `    <record>
@@ -111,7 +136,8 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify,
 
   const exportPDF = () => {
     setIsExportOpen(false);
-    if (!history || history.length === 0) {
+    const exportRecords = getExportHistory();
+    if (!exportRecords || exportRecords.length === 0) {
       onNotify('No session history available to export', 'error');
       return;
     }
@@ -122,7 +148,7 @@ export default function Analytics({ history, getStats, onClearHistory, onNotify,
       return;
     }
 
-    const rowsHtml = history
+    const rowsHtml = exportRecords
       .map((h, index) => {
         const { dateStr, timeStr } = getRecordDateTime(h);
         return `

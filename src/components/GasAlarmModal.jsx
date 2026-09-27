@@ -4,7 +4,7 @@ import { Flame, VolumeX } from 'lucide-react';
 
 export default function GasAlarmModal({
   gasValue,
-  threshold = 2300,
+  threshold = 1500,
   isOpen,
   onSilence,
   isStandalone,

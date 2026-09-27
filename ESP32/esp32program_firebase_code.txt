@@ -10,7 +10,8 @@
 #define WIFI_PASSWORD "gani@1729"
 
 #define API_KEY "AIzaSyDS4rBkI0m9bF-UaLM3Y97BY-Hd1fm_HdU"
-#define DATABASE_URL "https://automation-b7189-default-rtdb.firebaseio.com/"
+// Removed trailing slash to prevent double-slash URL errors
+#define DATABASE_URL "https://automation-b7189-default-rtdb.firebaseio.com"
 
 #define SERVO1_PIN 25
 #define SERVO2_PIN 26
@@ -22,7 +23,9 @@
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
 
-FirebaseData fbdo;
+// Separate FirebaseData objects to prevent socket collisions between reads and writes
+FirebaseData fbdoData;     // Dedicated for outgoing telemetry JSON (ping, gas, temp, humidity, buzzer)
+FirebaseData fbdoControl;  // Dedicated for reading incoming controls (servo1, servo2, led1, led2, motor)
 FirebaseAuth auth;
 FirebaseConfig config;
 
@@ -37,14 +40,10 @@ int lastLed2 = -1;
 int lastMotor = -1;
 
 unsigned long lastControlUpdate = 0;
-unsigned long lastGasUpdate = 0;
-unsigned long lastDHTUpdate = 0;
-unsigned long lastHeartbeatUpdate = 0;
+unsigned long lastTelemetryUpdate = 0;
 
-const unsigned long controlInterval = 2000;
-const unsigned long gasInterval = 3000;
-const unsigned long dhtInterval = 3000;
-const unsigned long heartbeatInterval = 2000;
+const unsigned long controlInterval = 1000;   // Read controls every 1 second
+const unsigned long telemetryInterval = 2000; // Update all telemetry to Firebase every 2 seconds
 
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
@@ -61,7 +60,7 @@ void connectWiFi() {
 
     if (millis() - start >= 30000) {
       Serial.println();
-      Serial.println("WiFi connection timeout");
+      Serial.println("WiFi connection timeout, restarting ESP32...");
       ESP.restart();
     }
   }
@@ -105,154 +104,171 @@ void setupFirebase() {
 void syncInitialValues() {
   int value;
 
-  if (Firebase.RTDB.getInt(&fbdo, "/servo1")) {
-    value = constrain(fbdo.intData(), 0, 180);
+  // Sync Servo 1 & move hardware motor on startup
+  if (Firebase.RTDB.getInt(&fbdoControl, "/servo1")) {
+    value = constrain(fbdoControl.intData(), 0, 180);
+    servo1.write(value);
     lastServo1Angle = value;
+    Serial.print("Initial Servo 1 synced & set to: ");
+    Serial.println(value);
+  } else {
+    Serial.print("Initial Servo 1 sync error: ");
+    Serial.println(fbdoControl.errorReason());
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/servo2")) {
-    value = constrain(fbdo.intData(), 0, 180);
+  // Sync Servo 2 & move hardware motor on startup
+  if (Firebase.RTDB.getInt(&fbdoControl, "/servo2")) {
+    value = constrain(fbdoControl.intData(), 0, 180);
+    servo2.write(value);
     lastServo2Angle = value;
+    Serial.print("Initial Servo 2 synced & set to: ");
+    Serial.println(value);
+  } else {
+    Serial.print("Initial Servo 2 sync error: ");
+    Serial.println(fbdoControl.errorReason());
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/led1")) {
-    lastLed1 = fbdo.intData();
+  // Sync LED 1
+  if (Firebase.RTDB.getInt(&fbdoControl, "/led1")) {
+    lastLed1 = fbdoControl.intData();
     digitalWrite(LED1_PIN, lastLed1 ? HIGH : LOW);
+    Serial.print("Initial LED 1 synced & set to: ");
+    Serial.println(lastLed1 ? "ON" : "OFF");
+  } else {
+    Serial.print("Initial LED 1 sync error: ");
+    Serial.println(fbdoControl.errorReason());
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/led2")) {
-    lastLed2 = fbdo.intData();
+  // Sync LED 2
+  if (Firebase.RTDB.getInt(&fbdoControl, "/led2")) {
+    lastLed2 = fbdoControl.intData();
     digitalWrite(LED2_PIN, lastLed2 ? HIGH : LOW);
+    Serial.print("Initial LED 2 synced & set to: ");
+    Serial.println(lastLed2 ? "ON" : "OFF");
+  } else {
+    Serial.print("Initial LED 2 sync error: ");
+    Serial.println(fbdoControl.errorReason());
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/motor")) {
-    lastMotor = fbdo.intData();
+  // Sync Motor
+  if (Firebase.RTDB.getInt(&fbdoControl, "/motor")) {
+    lastMotor = fbdoControl.intData();
     digitalWrite(MOTOR_PIN, lastMotor ? HIGH : LOW);
+    Serial.print("Initial Motor synced & set to: ");
+    Serial.println(lastMotor ? "ON" : "OFF");
+  } else {
+    Serial.print("Initial Motor sync error: ");
+    Serial.println(fbdoControl.errorReason());
   }
 
-  Serial.println("Firebase values synchronized");
+  Serial.println("Firebase initial values synchronized successfully");
 }
 
 void checkControls() {
   int value;
 
-  if (Firebase.RTDB.getInt(&fbdo, "/servo1")) {
-    value = constrain(fbdo.intData(), 0, 180);
-
+  // Servo 1 Control Check
+  if (Firebase.RTDB.getInt(&fbdoControl, "/servo1")) {
+    value = constrain(fbdoControl.intData(), 0, 180);
     if (value != lastServo1Angle) {
       servo1.write(value);
       lastServo1Angle = value;
-
       Serial.print("Servo 1 moved to: ");
       Serial.println(value);
     }
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/servo2")) {
-    value = constrain(fbdo.intData(), 0, 180);
-
+  // Servo 2 Control Check
+  if (Firebase.RTDB.getInt(&fbdoControl, "/servo2")) {
+    value = constrain(fbdoControl.intData(), 0, 180);
     if (value != lastServo2Angle) {
       servo2.write(value);
       lastServo2Angle = value;
-
       Serial.print("Servo 2 moved to: ");
       Serial.println(value);
     }
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/led1")) {
-    value = fbdo.intData();
-
+  // LED 1 Control Check
+  if (Firebase.RTDB.getInt(&fbdoControl, "/led1")) {
+    value = fbdoControl.intData();
     if (value != lastLed1) {
       digitalWrite(LED1_PIN, value ? HIGH : LOW);
       lastLed1 = value;
-
       Serial.print("LED 1: ");
       Serial.println(value ? "ON" : "OFF");
     }
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/led2")) {
-    value = fbdo.intData();
-
+  // LED 2 Control Check
+  if (Firebase.RTDB.getInt(&fbdoControl, "/led2")) {
+    value = fbdoControl.intData();
     if (value != lastLed2) {
       digitalWrite(LED2_PIN, value ? HIGH : LOW);
       lastLed2 = value;
-
       Serial.print("LED 2: ");
       Serial.println(value ? "ON" : "OFF");
     }
   }
 
-  if (Firebase.RTDB.getInt(&fbdo, "/motor")) {
-    value = fbdo.intData();
-
+  // Motor Fan Control Check
+  if (Firebase.RTDB.getInt(&fbdoControl, "/motor")) {
+    value = fbdoControl.intData();
     if (value != lastMotor) {
       digitalWrite(MOTOR_PIN, value ? HIGH : LOW);
       lastMotor = value;
-
       Serial.print("Motor: ");
       Serial.println(value ? "ON" : "OFF");
     }
   }
 }
 
-void sendHeartbeat() {
+/**
+ * Sends ALL telemetry data (ping, gas, temperature, humidity, buzzer) in ONE single 
+ * atomic HTTP PATCH call using FirebaseJson.
+ * This guarantees the Firebase Console UI updates live in real-time with yellow/green 
+ * flashing animations without requiring a manual web browser refresh!
+ */
+void sendTelemetryData() {
   unsigned long uptimeSec = millis() / 1000;
-  if (Firebase.RTDB.setInt(&fbdo, "/ping", uptimeSec)) {
-    // Heartbeat ping sent to Firebase
-  } else {
-    Serial.print("Heartbeat Firebase error: ");
-    Serial.println(fbdo.errorReason());
-  }
-}
-
-void sendGasData() {
   int gasValue = analogRead(GAS_PIN);
+  int buzzerState = (gasValue > 1500) ? 1 : 0;
+  digitalWrite(BUZZER_PIN, buzzerState ? HIGH : LOW);
 
-  // Automatic physical buzzer control on Pin D14 (HIGH when gas > 2300, LOW when <= 2300)
-  if (gasValue > 2300) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    Firebase.RTDB.setInt(&fbdo, "/buzzer", 1);
-  } else {
-    digitalWrite(BUZZER_PIN, LOW);
-    Firebase.RTDB.setInt(&fbdo, "/buzzer", 0);
-  }
-
-  if (Firebase.RTDB.setInt(&fbdo, "/gas", gasValue)) {
-    Serial.print("Gas: ");
-    Serial.println(gasValue);
-  } else {
-    Serial.print("Gas Firebase error: ");
-    Serial.println(fbdo.errorReason());
-  }
-}
-
-void sendDHTData() {
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
 
-  if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("DHT11 read failed");
-    return;
+  FirebaseJson json;
+  json.set("ping", uptimeSec);
+  json.set("gas", gasValue);
+  json.set("buzzer", buzzerState);
+
+  if (!isnan(temperature)) {
+    json.set("temperature", temperature);
+  }
+  if (!isnan(humidity)) {
+    json.set("humidity", humidity);
   }
 
-  if (Firebase.RTDB.setFloat(&fbdo, "/temperature", temperature)) {
-    Serial.print("Temperature: ");
-    Serial.print(temperature);
-    Serial.println(" C");
+  if (Firebase.RTDB.updateNode(&fbdoData, "/", &json)) {
+    Serial.print("Telemetry updated live: Ping=");
+    Serial.print(uptimeSec);
+    Serial.print("s | Gas=");
+    Serial.print(gasValue);
+    if (!isnan(temperature)) {
+      Serial.print(" | Temp=");
+      Serial.print(temperature);
+      Serial.print("C");
+    }
+    if (!isnan(humidity)) {
+      Serial.print(" | Hum=");
+      Serial.print(humidity);
+      Serial.print("%");
+    }
+    Serial.println();
   } else {
-    Serial.print("Temperature Firebase error: ");
-    Serial.println(fbdo.errorReason());
-  }
-
-  if (Firebase.RTDB.setFloat(&fbdo, "/humidity", humidity)) {
-    Serial.print("Humidity: ");
-    Serial.print(humidity);
-    Serial.println(" %");
-  } else {
-    Serial.print("Humidity Firebase error: ");
-    Serial.println(fbdo.errorReason());
+    Serial.print("Telemetry update error: ");
+    Serial.println(fbdoData.errorReason());
   }
 }
 
@@ -305,24 +321,16 @@ void loop() {
     return;
   }
 
-  if (millis() - lastHeartbeatUpdate >= heartbeatInterval) {
-    lastHeartbeatUpdate = millis();
-    sendHeartbeat();
-  }
-
+  // 1. Read controls from Firebase every 1 second
   if (millis() - lastControlUpdate >= controlInterval) {
     lastControlUpdate = millis();
     checkControls();
   }
 
-  if (millis() - lastGasUpdate >= gasInterval) {
-    lastGasUpdate = millis();
-    sendGasData();
-  }
-
-  if (millis() - lastDHTUpdate >= dhtInterval) {
-    lastDHTUpdate = millis();
-    sendDHTData();
+  // 2. Atomic payload push of ping, gas, temp, humidity, buzzer every 2 seconds
+  if (millis() - lastTelemetryUpdate >= telemetryInterval) {
+    lastTelemetryUpdate = millis();
+    sendTelemetryData();
   }
 
   delay(10);
