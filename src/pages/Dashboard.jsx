@@ -235,12 +235,12 @@ export default function Dashboard({
         })()}
       </motion.div>
 
-      {/* SECTION 2: INTERACTIVE APPLIANCE & DOOR CONTROLS (All 5 Cards Uniform Size) */}
+      {/* SECTION 2: APPLIANCE & DOOR CONTROLS (All 5 Cards Uniform Size) */}
       <motion.div variants={item} className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-heading font-bold text-white text-base sm:text-lg flex items-center gap-2">
             <DoorOpen className="w-5 h-5 text-cyan-400" />
-            INTERACTIVE APPLIANCE & DOOR CONTROLS
+            APPLIANCE & DOOR CONTROLS
           </h2>
         </div>
 

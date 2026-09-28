@@ -478,28 +478,66 @@ export default function SensorChart({
     return 'Optimal Comfort';
   }, [activeRecords]);
 
-  // Export telemetry records (CSV, XML, PDF) with offline status tracking
+  // Export telemetry records (CSV, XML, PDF) ensuring full timeline coverage for selected range without skipping minutes
   const getRecordsToExport = () => {
-    let records = [...(activeRecords && activeRecords.length > 0 ? activeRecords : (history || []))];
-    if (records.length > 0) {
-      const lastRec = records[records.length - 1];
-      const now = Date.now();
-      const timeSinceLastUpdate = lastRec && typeof lastRec.timestamp === 'number' ? now - lastRec.timestamp : Infinity;
+    const combinedMap = new Map();
 
-      if (isDeviceOffline || timeSinceLastUpdate > 30000) {
-        const d = new Date(now);
-        records.push({
-          id: `export-offline-${now}`,
-          timestamp: now,
+    (history || []).forEach((h) => {
+      if (h && typeof h.timestamp === 'number' && !isNaN(h.timestamp)) {
+        const key = h.id || `${h.timestamp}-${h.temp}-${h.humidity}-${h.gas}`;
+        combinedMap.set(key, h);
+      }
+    });
+
+    (firestoreData || []).forEach((f) => {
+      if (f && typeof f.timestamp === 'number' && !isNaN(f.timestamp)) {
+        const key = f.id || `${f.timestamp}-${f.temp}-${f.humidity}-${f.gas}`;
+        combinedMap.set(key, f);
+      }
+    });
+
+    const startTime = start.getTime();
+    const endTime = end === 'now' ? liveNow : (end instanceof Date ? end.getTime() : liveNow);
+
+    const allRealRecords = Array.from(combinedMap.values())
+      .filter((h) => h && typeof h.timestamp === 'number' && h.timestamp >= startTime && h.timestamp <= endTime)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    // Determine interval step size based on active rangeFilter
+    let stepMs = 60000; // Default 1 minute step for 1h/2h
+    if (rangeFilter === '6h') stepMs = 120000; // 2 minutes
+    else if (rangeFilter === '24h') stepMs = 300000; // 5 minutes
+    else if (rangeFilter === '3d' || rangeFilter === '7d' || rangeFilter === 'custom') stepMs = 600000; // 10 minutes
+
+    const exportMap = new Map();
+
+    // 1. Add all actual real sensor readings within the selected window
+    allRealRecords.forEach((rec) => {
+      exportMap.set(rec.timestamp, rec);
+    });
+
+    // 2. Fill timeline steps where no real sensor reading was recorded (offline periods)
+    for (let ts = startTime; ts <= endTime; ts += stepMs) {
+      // Check if any real record exists within 45 seconds of this timeline tick
+      const hasRealRecord = allRealRecords.some((r) => Math.abs(r.timestamp - ts) < 45000);
+
+      if (!hasRealRecord) {
+        const d = new Date(ts);
+        exportMap.set(ts, {
+          id: `export-off-${ts}`,
+          timestamp: ts,
           dateStr: d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }),
           time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           temp: 0,
           humidity: 0,
           gas: 0,
+          isOffline: true,
         });
       }
     }
-    return records;
+
+    const finalRecords = Array.from(exportMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+    return finalRecords;
   };
 
   const getRecordDateTime = (h) => {
